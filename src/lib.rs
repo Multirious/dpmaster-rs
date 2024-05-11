@@ -29,14 +29,12 @@ const PREFIX: &[u8] = b"\xFF\xFF\xFF\xFF";
 pub struct MasterServer(pub SocketAddr);
 
 impl MasterServer {
-    pub fn get_servers(
-        &self,
-        udp: &UdpSocket,
+    pub fn create_get_servers(
         name: &str,
         protocol_version: &str,
         full: bool,
         empty: bool,
-    ) -> io::Result<()> {
+    ) -> Vec<u8> {
         let mut request = PREFIX.to_vec();
         request.extend(b"getservers");
         request.extend(b" ");
@@ -51,11 +49,9 @@ impl MasterServer {
             request.extend(b" ");
             request.extend(b"full");
         }
-        udp.send_to(&request, self.0)?;
-        Ok(())
+        request
     }
-
-    pub fn get_servers_ext(
+    pub fn get_servers(
         &self,
         udp: &UdpSocket,
         name: &str,
@@ -63,6 +59,18 @@ impl MasterServer {
         full: bool,
         empty: bool,
     ) -> io::Result<()> {
+        udp.send_to(
+            &Self::create_get_servers(name, protocol_version, full, empty),
+            self.0,
+        )?;
+        Ok(())
+    }
+    pub fn create_get_servers_ext(
+        name: &str,
+        protocol_version: &str,
+        full: bool,
+        empty: bool,
+    ) -> Vec<u8> {
         let mut request = PREFIX.to_vec();
         request.extend(b"getserversExt");
         request.extend(b" ");
@@ -77,7 +85,21 @@ impl MasterServer {
             request.extend(b" ");
             request.extend(b"full");
         }
-        udp.send_to(&request, self.0)?;
+        request
+    }
+
+    pub fn get_servers_ext(
+        &self,
+        udp: &UdpSocket,
+        name: &str,
+        protocol_version: &str,
+        full: bool,
+        empty: bool,
+    ) -> io::Result<()> {
+        udp.send_to(
+            &Self::create_get_servers_ext(name, protocol_version, full, empty),
+            self.0,
+        )?;
         Ok(())
     }
 }
@@ -124,13 +146,17 @@ impl MasterServerResponse {
 pub struct GameServer(pub SocketAddr);
 
 impl GameServer {
-    pub fn get_info(&self, udp: &UdpSocket, challenege: &str) -> io::Result<()> {
+    pub fn create_get_info(challenege: &str) -> Vec<u8> {
         assert!(!challenege.contains(['\\', '/', ';', '"', '%']));
         let mut request = PREFIX.to_vec();
         request.extend(b"getinfo");
         request.extend(b" ");
         request.extend(challenege.as_bytes());
-        udp.send_to(&request, self.0)?;
+        request
+    }
+
+    pub fn get_info(&self, udp: &UdpSocket, challenege: &str) -> io::Result<()> {
+        udp.send_to(&Self::create_get_info(challenege), self.0)?;
         Ok(())
     }
 }
@@ -183,8 +209,8 @@ fn do_query() {
             &udp,
             APPLICATION,
             &APP_PROTOCOL_VERSION.to_string(),
-            false,
-            false,
+            true,
+            true,
         );
         match res {
             Ok(_) => println!("{master_hn} success"),
