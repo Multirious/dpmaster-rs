@@ -6,9 +6,11 @@ use std::{
 };
 
 use nom::{
-    bytes::complete::{tag, take, take_while},
-    multi::{many1, many_till},
+    branch::alt,
+    bytes::complete::{tag, take, take_until, take_while},
+    multi::{many0, many1},
     sequence::tuple,
+    Parser,
 };
 
 type IResult<'a, T> = nom::IResult<&'a [u8], T>;
@@ -64,36 +66,126 @@ fn socket_addr(i: &[u8]) -> IResult<SocketAddr> {
     }
 }
 
-pub fn getserversResponse(i: &[u8]) -> IResult<Vec<SocketAddrV4>> {
-    let (i, (_, _, (sockets, _))) = tuple((
-        command_prefix,
-        tag(b"getserversResponse"),
-        many_till(socket_addr_v4, eot),
-    ))(i)?;
-    Ok((i, sockets))
+pub struct ContainsEot(pub bool);
+
+enum Either<L, R> {
+    Left(L),
+    Right(R),
 }
 
-pub fn getserversExtResponse(i: &[u8]) -> IResult<Vec<SocketAddr>> {
-    let (i, (_, _, (sockets, _))) = tuple((
-        command_prefix,
-        tag(b"getserversExtResponse"),
-        many_till(socket_addr, eot),
-    ))(i)?;
-    Ok((i, sockets))
+pub fn getserversResponse(i: &[u8]) -> IResult<(Vec<SocketAddrV4>, ContainsEot)> {
+    let (i, (_, _)) = tuple((command_prefix, tag(b"getserversResponse")))(i)?;
+    let (i, mut list) = many0(alt((
+        eot.map(|_| Either::Right(())),
+        socket_addr_v4.map(Either::Left),
+    )))(i)?;
+    let contains_eot = matches!(list.last(), Some(Either::Right(())));
+    if contains_eot {
+        list.pop();
+    }
+    let list = list
+        .into_iter()
+        .filter_map(|a| match a {
+            Either::Left(x) => Some(x),
+            Either::Right(()) => None,
+        })
+        .collect();
+    Ok((i, (list, ContainsEot(contains_eot))))
 }
 
-pub fn key_value(i: &[u8]) -> IResult<HashMap<&[u8], &[u8]>> {
+pub fn getserversExtResponse(i: &[u8]) -> IResult<(Vec<SocketAddr>, ContainsEot)> {
+    let (i, (_, _)) = tuple((command_prefix, tag(b"getserversExtResponse")))(i)?;
+    let (i, mut list) = many0(alt((
+        eot.map(|_| Either::Right(())),
+        socket_addr.map(Either::Left),
+    )))(i)?;
+    let contains_eot = matches!(list.last(), Some(Either::Right(())));
+    if contains_eot {
+        list.pop();
+    }
+    let list = list
+        .into_iter()
+        .filter_map(|a| match a {
+            Either::Left(x) => Some(x),
+            Either::Right(()) => None,
+        })
+        .collect();
+    Ok((i, (list, ContainsEot(contains_eot))))
+}
+
+pub fn key_value_map(i: &[u8]) -> IResult<HashMap<&[u8], &[u8]>> {
     let (i, o) = many1(tuple((
         tag(b"\\"),
         take_while(|b: u8| b != b'\\'),
         tag(b"\\"),
-        take_while(|b: u8| b != b'\\'),
+        take_while(|b: u8| b != b'\\' && b != b'\n'),
     )))(i)?;
     let map = o.into_iter().map(|(_, k, _, v)| (k, v)).collect();
     Ok((i, map))
 }
 
-pub fn infoReponse(i: &[u8]) -> IResult<HashMap<&[u8], &[u8]>> {
-    let (i, (_, _, map)) = tuple((command_prefix, tag(b"infoResponse\x0A"), key_value))(i)?;
+pub fn infoResponse(i: &[u8]) -> IResult<HashMap<&[u8], &[u8]>> {
+    let (i, (_, _, map)) = tuple((command_prefix, tag(b"infoResponse\n"), key_value_map))(i)?;
     Ok((i, map))
+}
+
+#[derive(Debug)]
+pub struct PlayerInfo {
+    pub frags: i32,
+    pub ping: i32,
+    pub name: String,
+    pub team: i32,
+}
+
+fn ascii_in_dquote(i: &[u8]) -> IResult<&[u8]> {
+    let var_name = tuple((tag(b"\""), take_until(b"\"".as_slice())))(i);
+    let (i, (_, o)) = var_name?;
+    let i = &i[1..];
+    Ok((i, o))
+}
+
+fn num_with_sign(i: &[u8]) -> IResult<&[u8]> {
+    fn num_neg(i: &[u8]) -> IResult<&[u8]> {
+        let (i2, (_, o)) = tuple((tag(b"-"), take_while(|b: u8| b.is_ascii_digit())))(i)?;
+        Ok((i2, &i[..(o.len() + 1)]))
+    }
+
+    alt((num_neg, take_while(|b: u8| b.is_ascii_digit())))(i)
+}
+
+fn player_infos(i: &[u8]) -> IResult<Vec<PlayerInfo>> {
+    fn player(i: &[u8]) -> IResult<PlayerInfo> {
+        let test = tuple((
+            num_with_sign,
+            tag(b" "),
+            num_with_sign,
+            tag(b" "),
+            ascii_in_dquote,
+            tag(b" "),
+            num_with_sign,
+            tag(b"\n"),
+        ))(i);
+        let (i, (frags, _, ping, _, name, _, team, _)) = test?;
+        Ok((
+            i,
+            PlayerInfo {
+                frags: std::str::from_utf8(frags).unwrap().parse().unwrap(),
+                ping: std::str::from_utf8(ping).unwrap().parse().unwrap(),
+                name: String::from_utf8(name.to_vec()).unwrap(),
+                team: std::str::from_utf8(team).unwrap().parse().unwrap(),
+            },
+        ))
+    }
+
+    many0(player)(i)
+}
+
+pub fn statusResponse(i: &[u8]) -> IResult<(HashMap<&[u8], &[u8]>, Vec<PlayerInfo>)> {
+    let (i, (_, _, kv)) = tuple((command_prefix, tag(b"statusResponse\n"), key_value_map))(i)?;
+    let (i, players) = if let Ok((i, (_, players))) = tuple((tag(b"\n"), player_infos))(i) {
+        (i, players)
+    } else {
+        (i, vec![])
+    };
+    Ok((i, (kv, players)))
 }
