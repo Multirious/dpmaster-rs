@@ -1,18 +1,21 @@
 use crate::{parse::PlayerInfo, ParseResponseError};
 
 use super::PREFIX;
+use std::borrow::Cow;
+use std::io;
 use std::{collections::HashMap, io::Write};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
-#[error("Write getinfo error")]
-pub enum WriteGetInfoError {
-    #[error(
-        "A challenge must only contains ASCII characters but exclude '\\', '/', ';', '\"' and '%'"
-    )]
-    InvalidChallengeCharacter,
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
+super::define_checked_string! {
+    "A challenge must only contains ASCII characters but exclude '\\', '/', ';', '\"' and '%'",
+    NewChallengeError,
+    Challenge,
+    challenge,
+    |b| match *b {
+        b'\\' | b'/' | b';' | b'"' | b'%' => false,
+        33..=126 => true,
+        _ => false,
+    }
 }
 
 /// This message is sent by a master to a server, usually in response
@@ -21,20 +24,21 @@ pub enum WriteGetInfoError {
 /// challenge string is necessary to authenticate the server's
 /// corresponding "infoResponse".
 #[doc(alias = "getinfo")]
-pub fn write_get_info<W: Write>(mut w: W, challenge: &[u8]) -> Result<u64, WriteGetInfoError> {
-    if !challenge.iter().all(|b| match *b {
-        b'\\' | b'/' | b';' | b'"' | b'%' => false,
-        33..=126 => true,
-        _ => false,
-    }) {
-        return Err(WriteGetInfoError::InvalidChallengeCharacter);
+pub struct GetInfo<'a> {
+    pub challenge: Challenge<'a>,
+}
+
+impl GetInfo<'_> {
+    pub fn new(challenge: Challenge) -> GetInfo<'_> {
+        GetInfo { challenge }
     }
-    w.write_all(PREFIX)?;
-    w.write_all(b"getinfo")?;
-    w.write_all(b" ")?;
-    w.write_all(challenge)?;
-    let written = u64_len(PREFIX) + u64_len(b"getinfo") + u64_len(b" ") + u64_len(challenge);
-    Ok(written)
+    pub fn write_all<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(PREFIX)?;
+        writer.write_all(b"getinfo")?;
+        writer.write_all(b" ")?;
+        writer.write_all(self.challenge.as_ref())?;
+        Ok(())
+    }
 }
 
 /// An "infoResponse" message is the reponse to a "getinfo" request.
@@ -64,36 +68,26 @@ impl InfoResponse {
     }
 }
 
-#[derive(Debug, Error)]
-#[error("Write getstatus error")]
-pub enum WriteGetStatusError {
-    #[error(
-        "A challenge must only contains ASCII characters but exclude '\\', '/', ';', '\"' and '%'"
-    )]
-    InvalidChallengeCharacter,
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
-}
-
 #[doc(alias = "getstatus")]
-pub fn write_get_status<W: Write>(mut w: W, challenge: &[u8]) -> Result<u64, WriteGetStatusError> {
-    if !challenge.iter().all(|b| match *b {
-        b'\\' | b'/' | b';' | b'"' | b'%' => false,
-        33..=126 => true,
-        _ => false,
-    }) {
-        return Err(WriteGetStatusError::InvalidChallengeCharacter);
+pub struct GetStatus<'a> {
+    pub challenge: Challenge<'a>,
+}
+impl GetStatus<'_> {
+    pub fn new(challenge: Challenge) -> GetStatus<'_> {
+        GetStatus { challenge }
     }
-    w.write_all(PREFIX)?;
-    w.write_all(b"getstatus")?;
-    w.write_all(b" ")?;
-    w.write_all(challenge)?;
-    let written = u64_len(PREFIX) + u64_len(b"getstatus") + u64_len(b" ") + u64_len(challenge);
-    Ok(written)
+
+    pub fn write_all<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(PREFIX)?;
+        writer.write_all(b"getstatus")?;
+        writer.write_all(b" ")?;
+        writer.write_all(self.challenge.get())?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
-#[doc(alias = "infoResponse")]
+#[doc(alias = "statusResponse")]
 pub struct StatusResponse {
     pub key_values: HashMap<String, String>,
     pub player_infos: Vec<PlayerInfo>,
@@ -126,8 +120,4 @@ impl StatusResponse {
             }
         }
     }
-}
-
-fn u64_len(a: &[u8]) -> u64 {
-    a.len() as u64
 }

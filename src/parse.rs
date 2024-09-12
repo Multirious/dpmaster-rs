@@ -180,6 +180,7 @@ fn player_infos(i: &[u8]) -> IResult<Vec<PlayerInfo>> {
     many0(player)(i)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn statusResponse(i: &[u8]) -> IResult<(HashMap<&[u8], &[u8]>, Vec<PlayerInfo>)> {
     let (i, (_, _, kv)) = tuple((command_prefix, tag(b"statusResponse\n"), key_value_map))(i)?;
     let (i, players) = if let Ok((i, (_, players))) = tuple((tag(b"\n"), player_infos))(i) {
