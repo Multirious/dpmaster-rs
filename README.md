@@ -8,3 +8,6 @@ to fully support new games without having to restart or reconfigure it. In
 addition to its own protocol, dpmaster also supports the master protocols of
 "Quake III Arena" (Q3A), "Return to Castle Wolfenstein" (RtCW), and
 "Wolfenstein: Enemy Territory" (WoET).
+
+Current only made for use with my discord bot.
+Not all messages are implement.
