@@ -240,8 +240,8 @@ pub fn statusResponse(i: &[u8]) -> IResult<(HashMap<&[u8], &[u8]>, Vec<PlayerInf
             oob,
             tag(b"statusResponse\n").context(r#"b"statusResponse\n""#),
             key_value_map.cut(),
-            tag(b"\n").context("Newline seperated player info"),
-            player_infos.cut(),
+            tag(b"\n").context("Newline ending key value pair list"),
+            player_infos,
         ))
         .map(|(_oob, _msg, kv, _nl, player_infos)| (kv, player_infos))
         .context("statusResponse with player infos"),
@@ -249,8 +249,9 @@ pub fn statusResponse(i: &[u8]) -> IResult<(HashMap<&[u8], &[u8]>, Vec<PlayerInf
             oob,
             tag(b"statusResponse\n").context(r#"b"statusResponse\n""#),
             key_value_map.cut(),
+            tag(b"\n").context("Newline ending key value pair list"),
         ))
-        .map(|(_oob, _msg, kv)| (kv, vec![]))
+        .map(|(_oob, _msg, kv, _nl)| (kv, vec![]))
         .context("statusResponse without player infos"),
     ))
     .context("statusResponse with possibly player infos")
